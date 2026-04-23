@@ -3,11 +3,16 @@ node_modules/
 dist/
 web-build/
 logs/
+data/*.sqlite
+data/*.sqlite-*
+data-export/
 .work/
 *.log
 .env
 .env.local
 .env.production
+secrets/server.env
+secrets/backups/
 .DS_Store
 ios/
 android/

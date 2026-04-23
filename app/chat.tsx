@@ -14,7 +14,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getCurrentParticipant, signOut } from "../lib/auth";
 import { loadHistory, sendMessage } from "../lib/chat";
-import { type Message } from "../lib/supabase";
+import { type Message } from "../lib/api";
+
+// Client-only ids for optimistic / error rows use negative numbers so they can
+// never collide with SQLite-assigned positive ids from the server.
+function clientId() {
+  return -Date.now() - Math.floor(Math.random() * 1000);
+}
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -30,7 +36,7 @@ export default function ChatScreen() {
         router.replace("/");
         return;
       }
-      const hist = await loadHistory(p.id);
+      const hist = await loadHistory();
       setMessages(hist);
       setLoading(false);
     })();
@@ -43,8 +49,8 @@ export default function ChatScreen() {
     setSending(true);
 
     const optimistic: Message = {
-      id: `tmp-${Date.now()}`,
-      participant_id: "",
+      id: clientId(),
+      participant_id: 0,
       role: "user",
       content: text,
       created_at: new Date().toISOString(),
@@ -53,13 +59,15 @@ export default function ChatScreen() {
 
     try {
       const assistant = await sendMessage(text);
-      setMessages((m) => [...m.filter((x) => x.id !== optimistic.id), { ...optimistic, id: `local-${Date.now()}` }, assistant]);
+      // Keep the optimistic user bubble visible (don't remove it) and append
+      // the real assistant response.
+      setMessages((m) => [...m, assistant]);
     } catch (err: any) {
       setMessages((m) => [
         ...m,
         {
-          id: `err-${Date.now()}`,
-          participant_id: "",
+          id: clientId(),
+          participant_id: 0,
           role: "assistant",
           content: `⚠️ ${err?.message ?? "Failed to send"}`,
           created_at: new Date().toISOString(),
@@ -89,7 +97,7 @@ export default function ChatScreen() {
         <FlatList
           ref={listRef}
           data={messages}
-          keyExtractor={(m) => m.id}
+          keyExtractor={(m) => String(m.id)}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => (
             <View

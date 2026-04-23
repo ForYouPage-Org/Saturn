@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# First-run on a fresh Mac (source or target).
-# Safe to re-run. Installs deps, builds the web bundle.
+# First-run on a fresh Mac (source or target). Safe to re-run.
+# Installs deps, initialises the SQLite DB, builds the web bundle.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,33 +21,39 @@ if ! command -v node >/dev/null; then
 fi
 echo "── node: $(node --version)"
 
-# 2. Dependencies.
-echo "── npm install"
+# 2. Dependencies. better-sqlite3 compiles natively; needs Xcode CLT.
+echo "── npm install  (rebuilds better-sqlite3 for this machine's arch)"
 npm install --no-audit --no-fund
 
-# 3. Env check.
-if [[ ! -f .env ]]; then
+# 3. Secrets check — non-fatal, but /api/chat will fail until AZURE_OPENAI_*
+#    is set in secrets/server.env.
+mkdir -p secrets
+if [[ ! -f secrets/server.env ]]; then
   echo
-  echo "!! .env is missing. Before building, copy .env.example to .env and fill in:"
-  echo "     EXPO_PUBLIC_SUPABASE_URL"
-  echo "     EXPO_PUBLIC_SUPABASE_ANON_KEY"
-  echo "   (these get bundled into the web output at build time)."
-  echo
-  echo "   Then re-run: bash setup.sh"
-  exit 0
+  echo "⚠ secrets/server.env is missing."
+  echo "   Copy secrets/server.env.example and fill in AZURE_OPENAI_API_KEY +"
+  echo "   a fresh MERCURY_ADMIN_TOKEN (openssl rand -base64 32)."
+  echo "   You can finish this step later; the server will start, just the"
+  echo "   /api/chat endpoint will return 'not configured' until you do."
 fi
 
-# 4. Build web bundle.
+# 4. Initialise SQLite (idempotent — runs schema.sql + seed.sql).
+echo "── initialise DB (data/pilot.sqlite)"
+mkdir -p data
+npm run db:init
+
+# 5. Build web bundle.
 echo "── build web bundle → dist/"
 npm run build:web
 
-# 5. Logs dir for the LaunchAgent.
+# 6. Logs dir for the LaunchAgent.
 mkdir -p logs
 
 echo
 echo "── done @ $(ts)"
 echo
 echo "Next:"
-echo "  bash scripts/install_launchagent.sh     # keep static server running on :${MERCURY_PILOT_PORT:-3002}"
+echo "  bash scripts/install_launchagent.sh     # keep server running on :${MERCURY_PILOT_PORT:-3002}"
 echo "  make status                             # verify it's up"
 echo "  make logs                               # tail output"
+echo "  curl http://127.0.0.1:${MERCURY_PILOT_PORT:-3002}/api/health"

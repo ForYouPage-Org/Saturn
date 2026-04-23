@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getActiveSurvey, submitEsm } from "../lib/esm";
-import { type EsmQuestion, type EsmSurvey } from "../lib/supabase";
+import { type EsmQuestion, type EsmSurvey } from "../lib/api";
 
 export default function EsmScreen() {
   const { slug, triggered_at } = useLocalSearchParams<{ slug?: string; triggered_at?: string }>();

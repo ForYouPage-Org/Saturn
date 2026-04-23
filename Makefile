@@ -27,6 +27,9 @@ build: build-web
 build-web:
 	npm run build:web
 
+db-init:
+	npm run db:init
+
 web-start:
 	bash scripts/run_web.sh
 

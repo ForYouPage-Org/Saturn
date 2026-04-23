@@ -8,10 +8,12 @@ Pilot app for a teen research study. Two things:
 Stack:
 
 - **Expo (React Native)** — one codebase for web, iOS, Android.
-- **Supabase** — Postgres (data), auth (anonymous), edge functions (AI proxy + push trigger).
-- **Azure OpenAI Responses API** — model backing the chat. Key lives in Supabase edge function secrets, never in the client.
+- **Self-hosted Node server on the iMac** — Express + SQLite (`better-sqlite3`). One process serves both the static web bundle and `/api/*`. Matches the hub's pattern; no cloud backend to manage.
+- **Azure OpenAI Responses API** — called from the server, key in `secrets/server.env`, never in the client.
 
-Integration with the `ai-teen` analysis project is intentionally thin: pilot data exports as CSV via `scripts/export_data.sh`, then gets ingested by the existing pipeline.
+Integration with the `ai-teen` analysis project is intentionally thin: pilot data exports as CSV via [scripts/export_data.sh](scripts/export_data.sh), then gets ingested by the existing pipeline.
+
+The repo lives at **`ForYouPage-Org/Saturn`** (the name carried over from an earlier project; the prior code is preserved on branch `archive/social-app`).
 
 ---
 
@@ -23,129 +25,164 @@ app/                       # Expo Router screens
   index.tsx                # Enrollment (code + age + consent)
   chat.tsx                 # ChatGPT-like screen
   esm.tsx                  # ESM form (modal)
-lib/                       # Client utilities
-  supabase.ts              # Supabase client + types
-  auth.ts                  # Anonymous sign-in + participant row
-  chat.ts                  # invokes the `chat` edge function
-  esm.ts                   # fetches active survey, submits responses
+lib/                       # Client utilities (thin wrappers around fetch)
+  api.ts                   # HTTP client with Bearer-token auth
+  auth.ts  chat.ts  esm.ts # feature modules that use api.ts
   notifications.ts         # Expo push token registration
-supabase/
-  migrations/
-    20260423000000_init.sql
-  functions/
-    chat/index.ts          # Azure OpenAI proxy
-    esm-trigger/index.ts   # researcher-triggered push broadcast
+server/                    # The Node API + static file server
+  server.mjs               # Express app, all /api/* routes
+  db.mjs                   # better-sqlite3 + prepared statements
+  azure.mjs                # Azure OpenAI Responses API client
+  schema.sql   seed.sql    # applied on startup (idempotent)
 scripts/
-  export_data.sh           # CSV export for the ai-teen pipeline
+  run_web.sh               # LaunchAgent entrypoint for server.mjs
+  run_tunnel.sh            # LaunchAgent entrypoint for ngrok
+  install_launchagent.sh
+  push_and_deploy.sh       # source → target Mac deploy
+  export_data.sh           # sqlite3 → CSVs for ai-teen
+config/                    # LaunchAgent plist templates
+data/                      # SQLite DB lives here at runtime (gitignored)
+secrets/                   # Runtime secrets (gitignored except .example)
 ```
 
 ---
 
-## Setup
-
-### 1. Install deps
+## Local dev (quick loop on your laptop)
 
 ```bash
 cd /Users/marxw/Research/projects/mercury
 npm install
+cp secrets/server.env.example secrets/server.env
+# Fill in AZURE_OPENAI_API_KEY + MERCURY_ADMIN_TOKEN (openssl rand -base64 32)
+
+npm run db:init          # creates data/pilot.sqlite
+npm run build:web        # exports to dist/
+npm run serve            # starts server on 127.0.0.1:3002
+# open http://127.0.0.1:3002
 ```
 
-### 2. Create a Supabase project
+For iterative UI work, use `npm run web` (Expo dev server) in another terminal — it hot-reloads and still talks to the Node API at `/api/*` (Expo dev server proxies).
 
-Either via the dashboard or the CLI:
+---
+
+## Deploying to the iMac (same pattern as `_hub`)
+
+The source Mac (this one) builds + pushes. The target iMac (`marxs-imac` on the Tailscale tailnet) hosts the Node server kept alive by a LaunchAgent on port **3002** (hub uses 3001; both can coexist). An optional ngrok LaunchAgent exposes it publicly.
+
+### One-time, on the target iMac
 
 ```bash
-supabase login
-supabase link --project-ref <your-project-ref>
+git clone https://github.com/ForYouPage-Org/Saturn.git ~/Research/projects/mercury
+cd ~/Research/projects/mercury
+# Put secrets/server.env in place (or let `make deploy` rsync it for you).
+bash setup.sh
+bash scripts/install_launchagent.sh
 ```
 
-Apply the migration (creates tables + RLS policies + seeds the baseline survey):
+Prereqs on target: Node 20+, Xcode Command Line Tools (for `better-sqlite3` native build), Tailscale, Remote Login on, source's SSH key in `~/.ssh/authorized_keys`.
+
+### One-time, on the source (this Mac)
 
 ```bash
-supabase db push
+cp scripts/mercury-pilot-push.env.example ~/.mercury-pilot-push.env
+chmod 600 ~/.mercury-pilot-push.env
+# Edit MERCURY_PILOT_TARGET_HOST / _PATH / _USER
 ```
 
-### 3. Configure edge function secrets
+### Daily flow
 
 ```bash
-# Paste the actual Azure OpenAI key on the command line — do NOT put it in any
-# file that gets committed. Same for any future keys.
-supabase secrets set \
-  AZURE_OPENAI_API_KEY='<paste-key-here>' \
-  AZURE_OPENAI_BASE_URL=https://nexhelm-ai-marx.openai.azure.com/openai/v1 \
-  AZURE_OPENAI_MODEL=gpt-5.4 \
-  AZURE_OPENAI_API_VERSION=preview
+git push                   # push to origin/main
+make deploy                # rsync secrets + git pull + build + kickstart on target
+# or:
+make ship                  # build locally first, then deploy
 ```
 
-Deploy:
+`make deploy` does: snapshot target's `data/pilot.sqlite` back to `secrets/backups/<utc>/` (safety), `ssh target`, `git reset --hard origin/main`, rsync `secrets/server.env`, `npm install` (if `package-lock.json` changed), `npm run build:web`, `launchctl kickstart` the web agent. **Never touches `data/` on the target** — that's prod-owned.
+
+### Expose it publicly with ngrok
+
+Same pattern as the hub's tunnel agent:
 
 ```bash
-supabase functions deploy chat
-supabase functions deploy esm-trigger --no-verify-jwt
+brew install ngrok                    # on target iMac, one-time
+ngrok config add-authtoken <token>    # one-time
+bash scripts/install_launchagent.sh   # installs both `web` and `tunnel` agents
+make tunnel-url                       # print the current public URL
 ```
 
-`--no-verify-jwt` on `esm-trigger` is intentional — that endpoint authenticates by requiring the service-role key in the Authorization header, not a user JWT. It's researcher-only.
-
-### 4. Point the client at your Supabase project
+The tunnel LaunchAgent keeps ngrok pointed at `127.0.0.1:3002`. On the free plan the URL rotates on each restart. To pin a stable URL on a paid plan:
 
 ```bash
-cp .env.example .env
-# fill in EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY from the dashboard
+NGROK_DOMAIN=mercury-pilot.ngrok.app bash scripts/install_launchagent.sh
 ```
 
-### 5. Enable anonymous auth
-
-Supabase dashboard → Authentication → Providers → toggle **Anonymous** on.
-
-### 6. Run it
+### Local commands
 
 ```bash
-npm run web          # browser — easiest for development
-npm run ios          # iOS simulator (requires Xcode)
-npm run android      # Android emulator (requires Android Studio)
+make build             # export Expo web bundle to dist/
+make web-start         # foreground server on :3002
+make install-agent     # install the LaunchAgent(s)
+make status            # check which agents are running
+make logs              # tail web + tunnel stdout/stderr
+make uninstall-agent   # unload + remove all plists
+make tunnel-url        # extract the current ngrok URL from logs
 ```
-
-For real device testing, install **Expo Go** on your phone and scan the QR code from `npm start`.
 
 ---
 
 ## Triggering an ESM check-in
 
-Send a push to every enrolled participant:
+The server exposes `POST /api/admin/esm-trigger`, gated by `MERCURY_ADMIN_TOKEN` from `secrets/server.env`. Broadcast to all participants with a registered push token:
 
 ```bash
-curl -X POST https://<ref>.functions.supabase.co/esm-trigger \
-  -H "authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+curl -X POST https://<public-url>/api/admin/esm-trigger \
+  -H "x-admin-token: $MERCURY_ADMIN_TOKEN" \
   -H "content-type: application/json" \
   -d '{"slug":"baseline","title":"Check-in time","body":"Got 30 seconds?"}'
 ```
 
-Or to a subset:
+Or to a subset of participant ids:
 
 ```bash
-... -d '{"slug":"baseline","participantIds":["uuid-1","uuid-2"]}'
+... -d '{"slug":"baseline","participantIds":[1,2,5]}'
 ```
 
-To schedule it automatically (e.g. 3× per day), set up a Supabase Cron entry that hits this endpoint. Push notifications only fire on native iOS/Android builds — on web you'll rely on the in-app "Take check-in" button or route users to `/esm` directly.
+To schedule recurring triggers, add a cron / LaunchAgent on the source Mac that hits this endpoint on a schedule. Push notifications only fire on native iOS/Android builds — on web, participants use the **Take check-in** button on the chat screen.
 
 ### Authoring new surveys
 
-`esm_surveys.questions` is a JSONB column. Insert a new row, and the app will render it automatically:
+`esm_surveys.questions` is a JSON-encoded array. Insert a new row and the app will render it automatically:
 
-```sql
-insert into public.esm_surveys (slug, title, questions, active) values (
+```bash
+sqlite3 data/pilot.sqlite <<'SQL'
+insert into esm_surveys (slug, title, questions, active) values (
   'end-of-day',
   'End-of-day reflection',
   '[
     {"id":"helpful","type":"likert","prompt":"How helpful was the assistant today?","min":1,"max":7},
     {"id":"topics","type":"choice","prompt":"What did you use it for?","multiple":true,"options":["Homework","Social","Fun"]},
     {"id":"notes","type":"text","prompt":"Anything else?","optional":true}
-  ]'::jsonb,
-  true
+  ]',
+  1
 );
+SQL
 ```
 
 Supported question types: `likert` (with optional `min_label`/`max_label`), `text`, `choice` (with `multiple` flag). Set `optional: true` to allow blank answers.
+
+---
+
+## Pulling data into the ai-teen analysis pipeline
+
+From the source Mac:
+
+```bash
+scp marxs-imac:~/Research/projects/mercury/data/pilot.sqlite ./data/
+./scripts/export_data.sh
+```
+
+Writes `data-export/participants.csv`, `messages.csv`, `esm_responses.csv`, `esm_surveys.csv`. Feed those into `ai-teen/extract_conversations.py` or query directly — same participant ids across files. No shared code or schema between the two projects by design.
 
 ---
 
@@ -161,91 +198,17 @@ eas build --platform ios
 eas build --platform android
 ```
 
-Once the EAS project exists, add its id to `app.json` under `extra.eas.projectId` so `expo-notifications` can fetch a push token.
+Once the EAS project exists:
 
----
-
-## Pulling data into the ai-teen analysis pipeline
-
-```bash
-./scripts/export_data.sh ./data-export
-```
-
-Writes `participants.csv`, `messages.csv`, `esm_responses.csv`. Feed those into `ai-teen/extract_conversations.py` or query directly — same participant ids across files. No shared code or schema between the two projects by design.
-
----
-
-## Deploying to the iMac (same pattern as `_hub`)
-
-The source Mac (this one) builds + pushes. The target iMac (`marxs-imac` on the Tailscale tailnet) hosts a static server kept alive by a LaunchAgent on port **3002**, same pattern as the hub's port 3001. Both can coexist.
-
-**One-time, on the target iMac:**
-
-```bash
-# The repo lives at ForYouPage-Org/Saturn — the name carried over from an
-# earlier project; current code on main is mercury-pilot. The prior
-# ActivityPub social app is preserved on branch archive/social-app.
-git clone https://github.com/ForYouPage-Org/Saturn.git ~/Research/projects/mercury
-cd ~/Research/projects/mercury
-# copy .env (EXPO_PUBLIC_SUPABASE_URL + anon key) into place
-bash setup.sh
-bash scripts/install_launchagent.sh
-```
-
-Prereqs on target: Node 20+, Tailscale, Remote Login on, source's SSH key in `~/.ssh/authorized_keys`.
-
-**One-time, on the source (this Mac):**
-
-```bash
-cp scripts/mercury-pilot-push.env.example ~/.mercury-pilot-push.env
-chmod 600 ~/.mercury-pilot-push.env
-# edit MERCURY_PILOT_TARGET_HOST / _PATH / _USER as needed
-```
-
-**Daily flow:**
-
-```bash
-make ship         # commit + push + rebuild + kickstart on target
-# or separately:
-git push
-make deploy
-```
-
-`make deploy` does: ssh target, `git reset --hard origin/main`, rsync `.env`, `npm install` (if lockfile changed), `npm run build:web`, `launchctl kickstart` the web agent.
-
-**Expose it publicly with ngrok** (same pattern as the hub's tunnel agent):
-
-```bash
-brew install ngrok                    # on target iMac, one-time
-ngrok config add-authtoken <token>    # one-time
-bash scripts/install_launchagent.sh   # now installs both `web` and `tunnel` agents
-make tunnel-url                       # print the current public URL
-```
-
-The tunnel LaunchAgent keeps ngrok pointed at `127.0.0.1:3002`. On the free plan the URL rotates on each restart (flaky for distributing to participants). To pin a stable URL on a paid plan:
-
-```bash
-NGROK_DOMAIN=mercury-pilot.ngrok.app bash scripts/install_launchagent.sh
-```
-
-If ngrok isn't installed on a given Mac, the tunnel agent is skipped automatically (development Macs don't need to expose the port).
-
-**Local commands** (useful on either Mac):
-
-```bash
-make build             # export Expo web bundle to dist/
-make web-start         # foreground static server on :3002
-make install-agent     # install the LaunchAgent
-make status            # check if the agent is running
-make logs              # tail LaunchAgent stdout/stderr
-make uninstall-agent   # unload + remove the plist
-```
+1. Add its id to [app.json](app.json) under `extra.eas.projectId` so `expo-notifications` can fetch a push token.
+2. Set `EXPO_PUBLIC_API_URL` in the build environment to the public ngrok URL (or a stable domain in front of it), so native clients hit the right server.
 
 ---
 
 ## Safety notes
 
-- RLS is on for every table. Participants can only read their own rows. The service-role key bypasses RLS and is used only inside edge functions.
-- The Azure OpenAI key never reaches the client — it lives in Supabase secrets and is used by the `chat` function.
-- The system prompt in `supabase/functions/chat/index.ts` nudges the model toward age-appropriate replies and flags distress. Review and adjust before deploying to real participants.
-- Consent is a checkbox today. For IRB-compliant recruiting, replace the enrollment screen with a proper assent + parental-consent flow.
+- The SQLite DB lives only on the iMac at `data/pilot.sqlite`. It's never pushed from source — `make deploy` snapshots a copy *back* to the source (`secrets/backups/<utc>/`) before each deploy.
+- The Azure OpenAI key is only in `secrets/server.env` on machines that run the server. `secrets/` is gitignored and rsynced source→target with `chmod 600`.
+- The system prompt in [server/server.mjs](server/server.mjs) nudges the model toward age-appropriate replies and flags distress. Review and adjust before deploying to real participants.
+- Auth is opaque Bearer tokens issued on enrollment; tokens persist in `AsyncStorage` on the device. No passwords — the participant-code acts as a pre-shared identifier. Suitable for a small pilot; not suitable for hostile users.
+- Consent is a single checkbox today. For IRB-compliant recruiting, replace the enrollment screen with a proper assent + parental-consent flow.

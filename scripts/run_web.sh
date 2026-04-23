@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Foreground launcher for the mercury-pilot web LaunchAgent.
+# Foreground launcher for the mercury-pilot server LaunchAgent.
 # launchd expects the child to stay in the foreground — no nohup/&.
+#
+# Loads secrets (Azure key, admin token) from secrets/server.env if it
+# exists. Never put secrets in files that go to git.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,7 +22,16 @@ else
   export PATH="/usr/local/bin:/usr/bin:/bin"
 fi
 
+# Server env (Azure key, admin token). Missing file is OK for a smoke test,
+# but /api/chat will fail until AZURE_OPENAI_* is set.
+if [[ -f "$HERE/secrets/server.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$HERE/secrets/server.env"
+  set +a
+fi
+
 export PORT="${MERCURY_PILOT_PORT:-3002}"
 export HOST="${MERCURY_PILOT_HOST:-127.0.0.1}"
 
-exec node scripts/static-server.mjs
+exec node server/server.mjs

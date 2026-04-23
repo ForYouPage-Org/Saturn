@@ -2,7 +2,7 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { supabase } from "./supabase";
+import { api } from "./api";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -40,12 +40,10 @@ export async function registerForPushAsync(): Promise<string | null> {
   );
   const token = tokenResult.data;
 
-  const { data: sessionData } = await supabase.auth.getSession();
-  if (sessionData.session) {
-    await supabase
-      .from("participants")
-      .update({ expo_push_token: token })
-      .eq("id", sessionData.session.user.id);
+  try {
+    await api.updatePushToken(token);
+  } catch {
+    // non-fatal; try again next time
   }
   return token;
 }

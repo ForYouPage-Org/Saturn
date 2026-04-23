@@ -23,11 +23,31 @@ const AGES = [13, 14, 15, 16, 17, 18, 19] as const;
 type Age = (typeof AGES)[number];
 type Mode = "signup" | "signin";
 
+// adjective-noun-NN format. Easy to remember, easy to say out loud, and
+// feels friendlier than a random alphanumeric string. ~30 × ~40 × 100 =
+// 120,000 combinations — plenty for a pilot. Keep lists free of anything
+// too babyish or too edgy; aim for neutral-fun.
+const ADJECTIVES = [
+  "cosmic", "funky", "zesty", "neon", "wild", "sneaky", "chill", "cozy",
+  "spicy", "dreamy", "sparkly", "groovy", "sunny", "mellow", "jazzy",
+  "quirky", "silky", "mystic", "lucky", "breezy", "glitchy", "toasty",
+  "snazzy", "moody", "vibey", "retro", "fluffy", "punchy", "sleepy",
+  "zippy",
+];
+const NOUNS = [
+  "pizza", "taco", "waffle", "bagel", "donut", "mango", "melon", "sushi",
+  "nacho", "cupcake", "panda", "sloth", "otter", "tiger", "dragon", "whale",
+  "fox", "owl", "koala", "axolotl", "comet", "rocket", "planet", "moon",
+  "nebula", "orbit", "wave", "aurora", "mountain", "forest", "river",
+  "cactus", "piano", "guitar", "ukulele", "bonsai", "cloud", "ember",
+  "phoenix", "tundra",
+];
+
 function generateCode(): string {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const num = String(Math.floor(Math.random() * 100)).padStart(2, "0");
+  return `${adj}-${noun}-${num}`;
 }
 
 export default function Enrollment() {
@@ -58,8 +78,8 @@ export default function Enrollment() {
 
   async function submit() {
     setError(null);
-    const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return setError("Enter your participant code.");
+    const normalized = code.trim().toLowerCase();
+    if (!normalized) return setError("Enter your participant code.");
     if (password.length < 6) return setError("Password must be at least 6 characters.");
     if (mode === "signup") {
       if (age === null) return setError("Pick your age.");
@@ -69,9 +89,9 @@ export default function Enrollment() {
     setSubmitting(true);
     try {
       if (mode === "signup") {
-        await enroll({ participantCode: trimmed, age: age!, password });
+        await enroll({ participantCode: normalized, age: age!, password });
       } else {
-        await signIn({ participantCode: trimmed, password });
+        await signIn({ participantCode: normalized, password });
       }
       registerForPushAsync().catch(() => {});
       router.replace("/chat");
@@ -134,10 +154,10 @@ export default function Enrollment() {
             <TextInput
               style={[styles.input, styles.codeInput]}
               value={code}
-              onChangeText={(v) => setCode(v.toUpperCase())}
-              autoCapitalize="characters"
+              onChangeText={(v) => setCode(v.toLowerCase())}
+              autoCapitalize="none"
               autoCorrect={false}
-              placeholder="e.g. ABC123"
+              placeholder="e.g. funky-panda-42"
               placeholderTextColor="#b4b4b4"
             />
             {mode === "signup" && (
@@ -152,8 +172,9 @@ export default function Enrollment() {
           </View>
           {mode === "signup" && (
             <Text style={styles.hint}>
-              Don&apos;t have one? Tap Generate and we&apos;ll make one for you. Write it down —
-              you&apos;ll need it to sign back in.
+              Don&apos;t have one? Tap Generate — you&apos;ll get something like{" "}
+              <Text style={styles.hintMono}>funky-panda-42</Text>. Write it down with your
+              password; you&apos;ll need both to sign back in.
             </Text>
           )}
         </View>
@@ -317,7 +338,6 @@ const styles = StyleSheet.create({
   },
   codeInput: {
     flex: 1,
-    letterSpacing: 2,
   },
   generateBtn: {
     paddingHorizontal: 14,
@@ -338,6 +358,13 @@ const styles = StyleSheet.create({
     color: "#8e8ea0",
     fontFamily: FONT_STACK,
     lineHeight: 18,
+  },
+  hintMono: {
+    fontFamily: Platform.select({
+      web: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+      default: undefined,
+    }),
+    color: "#1a1a1a",
   },
   ageRow: {
     flexDirection: "row",

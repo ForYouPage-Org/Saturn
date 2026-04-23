@@ -43,8 +43,9 @@ export const q = {
     insert into participants (participant_code, age, consent_at, password_hash)
     values (@participant_code, @age, @consent_at, @password_hash)
     returning *`),
+  // Case-insensitive lookup so uppercase legacy rows keep working if any exist.
   getParticipantByCode: db.prepare(
-    `select * from participants where participant_code = ?`
+    `select * from participants where lower(participant_code) = lower(?)`
   ),
   getParticipantById: db.prepare(`select * from participants where id = ?`),
   updatePushToken: db.prepare(

@@ -89,7 +89,7 @@ app.post("/api/enroll", (req, res) => {
     return res.status(400).json({ error: "password must be at least 6 characters" });
   }
 
-  const code = participantCode.trim().toUpperCase();
+  const code = participantCode.trim().toLowerCase();
   const existing = q.getParticipantByCode.get(code);
   if (existing) {
     // Don't overwrite someone else's account. Direct them to sign-in.
@@ -116,7 +116,7 @@ app.post("/api/sign-in", (req, res) => {
   if (typeof participantCode !== "string" || typeof password !== "string") {
     return res.status(400).json({ error: "missing credentials" });
   }
-  const code = participantCode.trim().toUpperCase();
+  const code = participantCode.trim().toLowerCase();
   const participant = q.getParticipantByCode.get(code);
   // Deliberately vague error text so we don't leak whether a code exists.
   const bad = { error: "incorrect code or password" };

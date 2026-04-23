@@ -21,6 +21,9 @@
       "bundler": "metro",
       "output": "single"
     },
+    "experiments": {
+      "baseUrl": "/pilot"
+    },
     "plugins": [
       "expo-router",
       [

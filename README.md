@@ -36,8 +36,8 @@ server/                    # The Node API + static file server
   schema.sql   seed.sql    # applied on startup (idempotent)
 scripts/
   run_web.sh               # LaunchAgent entrypoint for server.mjs
-  run_tunnel.sh            # LaunchAgent entrypoint for ngrok
-  install_launchagent.sh
+  install_launchagent.sh   # installs com.mercury.pilot.web
+  tailscale_serve.sh       # registers /pilot on the shared Tailscale Funnel
   push_and_deploy.sh       # source → target Mac deploy
   export_data.sh           # sqlite3 → CSVs for ai-teen
 config/                    # LaunchAgent plist templates
@@ -67,16 +67,17 @@ For iterative UI work, use `npm run web` (Expo dev server) in another terminal �
 
 ## Deploying to the iMac (same pattern as `_hub`)
 
-The source Mac (this one) builds + pushes. The target iMac (`marxs-imac` on the Tailscale tailnet) hosts the Node server kept alive by a LaunchAgent on port **3002** (hub uses 3001; both can coexist). An optional ngrok LaunchAgent exposes it publicly.
+The source Mac (this one) builds + pushes. The target iMac (`marxs-imac` on the Tailscale tailnet) hosts the Node server kept alive by a LaunchAgent on port **3002** (hub uses 3001; both can coexist). Public exposure is handled by the shared Tailscale Funnel — **no separate tunnel process** — under the `/pilot` path on the iMac's ts.net hostname.
 
 ### One-time, on the target iMac
 
 ```bash
-git clone https://github.com/ForYouPage-Org/Saturn.git ~/Research/projects/mercury
-cd ~/Research/projects/mercury
+git clone https://github.com/ForYouPage-Org/Saturn.git ~/Developer/_mercury-pilot
+cd ~/Developer/_mercury-pilot
 # Put secrets/server.env in place (or let `make deploy` rsync it for you).
 bash setup.sh
 bash scripts/install_launchagent.sh
+bash scripts/tailscale_serve.sh    # registers /pilot on the shared funnel
 ```
 
 Prereqs on target: Node 20+, Xcode Command Line Tools (for `better-sqlite3` native build), Tailscale, Remote Login on, source's SSH key in `~/.ssh/authorized_keys`.
@@ -100,33 +101,31 @@ make ship                  # build locally first, then deploy
 
 `make deploy` does: snapshot target's `data/pilot.sqlite` back to `secrets/backups/<utc>/` (safety), `ssh target`, `git reset --hard origin/main`, rsync `secrets/server.env`, `npm install` (if `package-lock.json` changed), `npm run build:web`, `launchctl kickstart` the web agent. **Never touches `data/` on the target** — that's prod-owned.
 
-### Expose it publicly with ngrok
+### Public URL via the shared Tailscale Funnel
 
-Same pattern as the hub's tunnel agent:
+The iMac already terminates HTTPS for the hub on `https://marxs-imac.tail876aa7.ts.net` via Tailscale Funnel. Mercury-pilot mounts under `/pilot` on the same domain — one fewer service than a per-app tunnel. `make tailscale-serve` (or `bash scripts/tailscale_serve.sh` directly on the iMac) registers:
 
-```bash
-brew install ngrok                    # on target iMac, one-time
-ngrok config add-authtoken <token>    # one-time
-bash scripts/install_launchagent.sh   # installs both `web` and `tunnel` agents
-make tunnel-url                       # print the current public URL
-```
+- `https://marxs-imac.tail876aa7.ts.net/` → hub (unchanged)
+- `https://marxs-imac.tail876aa7.ts.net/pilot` → mercury-pilot :3002
 
-The tunnel LaunchAgent keeps ngrok pointed at `127.0.0.1:3002`. On the free plan the URL rotates on each restart. To pin a stable URL on a paid plan:
+Tailscale strips the `/pilot` prefix before forwarding, so Express still handles plain `/api/*` and `/_expo/*`. The prefix is baked into the web bundle via `app.json`'s `experiments.baseUrl` and `.env`'s `EXPO_PUBLIC_API_URL`.
 
-```bash
-NGROK_DOMAIN=mercury-pilot.ngrok.app bash scripts/install_launchagent.sh
-```
+Changing the path (`/pilot` → `/study` etc.):
+1. Update `experiments.baseUrl` in `app.json`.
+2. Update `EXPO_PUBLIC_API_URL` in `.env`.
+3. On the iMac, `MERCURY_PILOT_MOUNT=/study bash scripts/tailscale_serve.sh`.
+4. `make ship` to rebuild and redeploy.
 
 ### Local commands
 
 ```bash
 make build             # export Expo web bundle to dist/
 make web-start         # foreground server on :3002
-make install-agent     # install the LaunchAgent(s)
-make status            # check which agents are running
-make logs              # tail web + tunnel stdout/stderr
-make uninstall-agent   # unload + remove all plists
-make tunnel-url        # extract the current ngrok URL from logs
+make install-agent     # install the LaunchAgent
+make status            # show LaunchAgent state
+make logs              # tail server stdout/stderr
+make uninstall-agent   # unload + remove the plist
+make tailscale-serve   # (on target) register /pilot on the Tailscale Funnel
 ```
 
 ---
@@ -136,7 +135,7 @@ make tunnel-url        # extract the current ngrok URL from logs
 The server exposes `POST /api/admin/esm-trigger`, gated by `MERCURY_ADMIN_TOKEN` from `secrets/server.env`. Broadcast to all participants with a registered push token:
 
 ```bash
-curl -X POST https://<public-url>/api/admin/esm-trigger \
+curl -X POST https://marxs-imac.tail876aa7.ts.net/pilot/api/admin/esm-trigger \
   -H "x-admin-token: $MERCURY_ADMIN_TOKEN" \
   -H "content-type: application/json" \
   -d '{"slug":"baseline","title":"Check-in time","body":"Got 30 seconds?"}'
@@ -201,7 +200,7 @@ eas build --platform android
 Once the EAS project exists:
 
 1. Add its id to [app.json](app.json) under `extra.eas.projectId` so `expo-notifications` can fetch a push token.
-2. Set `EXPO_PUBLIC_API_URL` in the build environment to the public ngrok URL (or a stable domain in front of it), so native clients hit the right server.
+2. Set `EXPO_PUBLIC_API_URL` in the build environment to the full absolute URL (`https://marxs-imac.tail876aa7.ts.net/pilot`), so native clients hit the right server.
 
 ---
 

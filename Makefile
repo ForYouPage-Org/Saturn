@@ -1,9 +1,8 @@
 SHELL := /usr/bin/env bash
 UID := $(shell id -u)
 LABEL_WEB := com.mercury.pilot.web
-LABEL_TUNNEL := com.mercury.pilot.tunnel
 
-.PHONY: help install build build-web web-start deploy ship install-agent uninstall-agent logs status typecheck
+.PHONY: help install build build-web db-init web-start deploy ship install-agent uninstall-agent tailscale-serve logs status typecheck
 
 help:
 	@echo "Mercury pilot — targets:"
@@ -11,8 +10,9 @@ help:
 	@echo "  build           alias for build-web"
 	@echo "  build-web       export static web bundle to dist/"
 	@echo "  web-start       run the static server in the foreground (for dev / smoke test)"
-	@echo "  install-agent   install LaunchAgent that keeps the static server running"
+	@echo "  install-agent   install LaunchAgent that keeps the server running"
 	@echo "  uninstall-agent unload and remove the LaunchAgent"
+	@echo "  tailscale-serve register /pilot mount on the shared Tailscale Funnel"
 	@echo "  deploy          rsync + rebuild on the target iMac, then kickstart the agent"
 	@echo "  ship            build locally, then deploy"
 	@echo "  logs            tail LaunchAgent stdout/stderr"
@@ -43,27 +43,20 @@ install-agent:
 
 uninstall-agent:
 	-launchctl bootout gui/$(UID)/$(LABEL_WEB) 2>/dev/null || true
-	-launchctl bootout gui/$(UID)/$(LABEL_TUNNEL) 2>/dev/null || true
-	-rm -f "$$HOME/Library/LaunchAgents/$(LABEL_WEB).plist" "$$HOME/Library/LaunchAgents/$(LABEL_TUNNEL).plist"
-	@echo "uninstalled $(LABEL_WEB) + $(LABEL_TUNNEL)"
+	-rm -f "$$HOME/Library/LaunchAgents/$(LABEL_WEB).plist"
+	@echo "uninstalled $(LABEL_WEB)"
+
+tailscale-serve:
+	bash scripts/tailscale_serve.sh
 
 logs:
 	@mkdir -p logs
-	@tail -F logs/web.stdout.log logs/web.stderr.log logs/tunnel.stdout.log logs/tunnel.stderr.log
+	@tail -F logs/web.stdout.log logs/web.stderr.log
 
 status:
-	@for L in $(LABEL_WEB) $(LABEL_TUNNEL); do \
-	  printf "  %-32s " "$$L"; \
-	  launchctl print "gui/$(UID)/$$L" 2>/dev/null | awk '/state =|pid =|last exit code =/ { sub(/^\t/,""); printf "%s  ", $$0 }' || printf "(not loaded)"; \
-	  echo; \
-	done
-
-tunnel-url:
-	@# Prefer ngrok's local admin API (most reliable). Falls back to log scrape.
-	@curl -s -m 2 http://127.0.0.1:4040/api/tunnels 2>/dev/null \
-	  | node -e 'let s=""; process.stdin.on("data",c=>s+=c).on("end",()=>{try{const d=JSON.parse(s);const t=(d.tunnels||[]).find(x=>x.proto==="https")||(d.tunnels||[])[0];if(t&&t.public_url)console.log(t.public_url);}catch{}})' 2>/dev/null \
-	  || grep -oE 'https://[a-z0-9-]+\.ngrok(-free)?\.(app|dev)' logs/tunnel.stdout.log 2>/dev/null | tail -1 \
-	  || echo "no tunnel URL yet — check make logs"
+	@printf "  %-32s " "$(LABEL_WEB)"
+	@launchctl print "gui/$(UID)/$(LABEL_WEB)" 2>/dev/null | awk '/state =|pid =|last exit code =/ { sub(/^\t/,""); printf "%s  ", $$0 }' || printf "(not loaded)"
+	@echo
 
 typecheck:
 	npx tsc --noEmit

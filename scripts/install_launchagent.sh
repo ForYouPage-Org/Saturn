@@ -1,55 +1,46 @@
 #!/usr/bin/env bash
-# Install / reinstall mercury-pilot LaunchAgents. Idempotent.
+# Install / reinstall the mercury-pilot web LaunchAgent. Idempotent.
 #
-# Installs:
-#   com.mercury.pilot.web     — static server on :3002 (always)
-#   com.mercury.pilot.tunnel  — ngrok tunnel (only if config template present
-#                                AND ngrok is on PATH)
+# Only one agent to manage — com.mercury.pilot.web (static + API on :3002).
+# Public exposure is handled by the shared Tailscale Funnel on the target iMac
+# (see scripts/tailscale_serve.sh); no separate tunnel process needed.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LABELS=(com.mercury.pilot.web com.mercury.pilot.tunnel)
+LABEL=com.mercury.pilot.web
+TEMPLATE="$HERE/config/$LABEL.plist.template"
+DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 mkdir -p "$HOME/Library/LaunchAgents" "$HERE/logs"
-chmod +x "$HERE/scripts/run_web.sh" "$HERE/scripts/run_tunnel.sh" "$HERE/scripts/static-server.mjs" 2>/dev/null || true
+chmod +x "$HERE/scripts/run_web.sh" "$HERE/server/server.mjs" 2>/dev/null || true
 
+if [[ ! -f "$TEMPLATE" ]]; then
+  echo "!! missing template at $TEMPLATE"
+  exit 1
+fi
 if [[ ! -d "$HERE/dist" ]]; then
   echo "!! no dist/ directory yet — run \`make build\` first"
   exit 1
 fi
 
-for LABEL in "${LABELS[@]}"; do
-  TEMPLATE="$HERE/config/$LABEL.plist.template"
-  DST="$HOME/Library/LaunchAgents/$LABEL.plist"
+# Proactively uninstall the retired tunnel agent if a prior install left it
+# behind — otherwise it'll keep flapping ngrok against a port no one watches.
+LEGACY_TUNNEL=com.mercury.pilot.tunnel
+if launchctl print "gui/$(id -u)/$LEGACY_TUNNEL" &>/dev/null; then
+  echo "── evicting legacy tunnel agent ($LEGACY_TUNNEL)"
+  launchctl bootout "gui/$(id -u)/$LEGACY_TUNNEL" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/$LEGACY_TUNNEL.plist"
+fi
 
-  if [[ ! -f "$TEMPLATE" ]]; then
-    echo "skip $LABEL (no template at $TEMPLATE)"
-    continue
-  fi
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+sleep 1
+sed "s|__MERCURY_ROOT__|${HERE}|g" "$TEMPLATE" > "$DST"
+launchctl bootstrap "gui/$(id -u)" "$DST"
+launchctl enable "gui/$(id -u)/$LABEL"
 
-  # Skip the tunnel agent if ngrok isn't installed on this machine — web
-  # is local-only on this mac, no need to expose it.
-  if [[ "$LABEL" == "com.mercury.pilot.tunnel" ]] && \
-     ! command -v ngrok >/dev/null && \
-     [[ ! -x /opt/homebrew/bin/ngrok && ! -x /usr/local/bin/ngrok ]]; then
-    echo "skip $LABEL (ngrok not installed — brew install ngrok if you want a public URL)"
-    continue
-  fi
-
-  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  sleep 1
-  sed "s|__MERCURY_ROOT__|${HERE}|g" "$TEMPLATE" > "$DST"
-  launchctl bootstrap "gui/$(id -u)" "$DST"
-  launchctl enable "gui/$(id -u)/$LABEL"
-  echo "installed $DST"
-done
-
+echo "installed $DST"
 echo
 echo "status:"
-for LABEL in "${LABELS[@]}"; do
-  printf "  %-32s " "$LABEL"
-  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null \
-    | awk '/^\tstate =|^\tpid =|^\tlast exit code =/ {sub(/^\t/, ""); printf "%s  ", $0}' \
-    || echo "(not loaded)"
-  echo
-done
+launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null \
+  | awk '/^\tstate =|^\tpid =|^\tlast exit code =/ {sub(/^\t/, ""); printf "  %s\n", $0}' \
+  || echo "  (not loaded)"

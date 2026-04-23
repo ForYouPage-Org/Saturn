@@ -182,7 +182,10 @@ The source Mac (this one) builds + pushes. The target iMac (`marxs-imac` on the 
 **One-time, on the target iMac:**
 
 ```bash
-git clone <remote-url> ~/Research/projects/mercury
+# The repo lives at ForYouPage-Org/Saturn — the name carried over from an
+# earlier project; current code on main is mercury-pilot. The prior
+# ActivityPub social app is preserved on branch archive/social-app.
+git clone https://github.com/ForYouPage-Org/Saturn.git ~/Research/projects/mercury
 cd ~/Research/projects/mercury
 # copy .env (EXPO_PUBLIC_SUPABASE_URL + anon key) into place
 bash setup.sh

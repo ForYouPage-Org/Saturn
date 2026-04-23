@@ -31,11 +31,13 @@ export default function RootLayout() {
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: "#ffffff" },
-          headerTitleStyle: { fontWeight: "600" },
+          headerTitleStyle: { fontWeight: "600", fontSize: 16 },
+          headerShadowVisible: false,
+          headerTitleAlign: "center",
         }}
       >
         <Stack.Screen name="index" options={{ title: "Mercury" }} />
-        <Stack.Screen name="chat" options={{ title: "Chat" }} />
+        <Stack.Screen name="chat" options={{ title: "Mercury" }} />
         <Stack.Screen name="esm" options={{ title: "Check-in", presentation: "modal" }} />
       </Stack>
     </SafeAreaProvider>

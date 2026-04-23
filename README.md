@@ -205,6 +205,14 @@ Once the EAS project exists:
 
 ---
 
+## Azure usage tracking via the hub dashboard
+
+Every `/api/chat` call appends one JSON line to whatever file `AZURE_USAGE_LOG_PATH` points at (default: `logs/azure_usage.jsonl` local to mercury-pilot). The hub's existing `/admin/azure-usage` dashboard reads the same JSONL format — set `AZURE_USAGE_LOG_PATH=/Users/marxw/Research/_hub/logs/azure_usage.jsonl` on the iMac and pilot traffic shows up in the hub dashboard automatically, grouped under `mercury-pilot:<participant_code>`. No hub code changes.
+
+The schema is defined in `_hub/web/src/lib/azure-usage.ts` — mercury-pilot's [server/azure-usage.mjs](server/azure-usage.mjs) emits the exact same shape. Token counts come from the Azure Responses API `usage` block. Per-1M pricing (`AZURE_OPENAI_INPUT_PRICE_PER_M` / `_OUTPUT_PRICE_PER_M`) defaults match the hub's rate card for gpt-5.x; override in `secrets/server.env` if Azure updates its pricing.
+
+---
+
 ## Safety notes
 
 - The SQLite DB lives only on the iMac at `data/pilot.sqlite`. It's never pushed from source — `make deploy` snapshots a copy *back* to the source (`secrets/backups/<utc>/`) before each deploy.

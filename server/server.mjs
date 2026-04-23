@@ -19,7 +19,8 @@ import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { statSync } from "node:fs";
 import { db, q, nowIso, newToken } from "./db.mjs";
-import { complete as azureComplete, isConfigured as azureReady } from "./azure.mjs";
+import { complete as azureComplete, isConfigured as azureReady, modelName as azureModel } from "./azure.mjs";
+import { logCall as logAzureCall, usageLogPath } from "./azure-usage.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -131,36 +132,58 @@ app.post("/api/chat", authRequired, async (req, res) => {
   if (!content) return res.status(400).json({ error: "empty message" });
   if (content.length > 8000) return res.status(400).json({ error: "too long" });
 
+  q.insertMessage.run({
+    participant_id: req.participant.id,
+    role: "user",
+    content,
+  });
+
+  const recent = q.recentMessages.all(req.participant.id, HISTORY_WINDOW * 2);
+  const history = recent.reverse();
+  const input = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history.map(({ role, content }) => ({ role, content })),
+  ];
+
+  let result;
   try {
-    q.insertMessage.run({
-      participant_id: req.participant.id,
-      role: "user",
-      content,
-    });
-
-    const recent = q.recentMessages.all(req.participant.id, HISTORY_WINDOW * 2);
-    // recent is newest-first; Azure wants oldest-first.
-    const history = recent.reverse();
-    const input = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...history.map(({ role, content }) => ({ role, content })),
-    ];
-
-    const assistantText = await azureComplete(input);
-    if (!assistantText) {
-      return res.status(502).json({ error: "empty completion" });
-    }
-
-    const saved = q.insertMessage.get({
-      participant_id: req.participant.id,
-      role: "assistant",
-      content: assistantText,
-    });
-    res.json({ message: saved });
+    result = await azureComplete(input);
   } catch (err) {
     console.error(err);
-    res.status(502).json({ error: err.message ?? "chat failed" });
+    // Log the failed call too — cost is 0 but timing + error are useful.
+    logAzureCall({
+      participantCode: req.participant.participant_code,
+      model: azureModel(),
+      prompt: content,
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      durationMs: err.durationMs ?? 0,
+      error: err.message ?? "chat failed",
+    });
+    return res.status(502).json({ error: err.message ?? "chat failed" });
   }
+
+  logAzureCall({
+    participantCode: req.participant.participant_code,
+    model: azureModel(),
+    prompt: content,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    reasoningTokens: result.reasoningTokens,
+    durationMs: result.durationMs,
+  });
+
+  if (!result.text) {
+    return res.status(502).json({ error: "empty completion" });
+  }
+
+  const saved = q.insertMessage.get({
+    participant_id: req.participant.id,
+    role: "assistant",
+    content: result.text,
+  });
+  res.json({ message: saved });
 });
 
 // ── /api/esm — fetch active survey, submit response ─────────────────────────
@@ -268,4 +291,5 @@ app.listen(PORT, HOST, () => {
   console.log(
     `mercury → http://${HOST}:${PORT}  (api:${distAvailable ? "+static" : ""}, azure:${azureReady() ? "ready" : "not configured"})`
   );
+  console.log(`  azure-usage log → ${usageLogPath()}`);
 });

@@ -1,4 +1,5 @@
 // Thin client for Azure OpenAI Responses API.
+// Returns assistant text + usage + timing so the caller can log it.
 
 const KEY = process.env.AZURE_OPENAI_API_KEY;
 const BASE = process.env.AZURE_OPENAI_BASE_URL;
@@ -10,6 +11,19 @@ export function isConfigured() {
   return Boolean(KEY && BASE);
 }
 
+export function modelName() {
+  return MODEL;
+}
+
+/**
+ * @returns {Promise<{
+ *   text: string,
+ *   inputTokens: number,
+ *   outputTokens: number,
+ *   reasoningTokens: number,
+ *   durationMs: number,
+ * }>}
+ */
 export async function complete(messages) {
   if (!isConfigured()) {
     throw new Error(
@@ -17,6 +31,7 @@ export async function complete(messages) {
     );
   }
   const url = `${BASE.replace(/\/$/, "")}/responses?api-version=${encodeURIComponent(API_VERSION)}`;
+  const t0 = Date.now();
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -29,12 +44,21 @@ export async function complete(messages) {
       reasoning: { effort: REASONING_EFFORT },
     }),
   });
+  const durationMs = Date.now() - t0;
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Azure OpenAI ${res.status}: ${text.slice(0, 500)}`);
+    const err = new Error(`Azure OpenAI ${res.status}: ${text.slice(0, 500)}`);
+    err.durationMs = durationMs;
+    throw err;
   }
   const data = await res.json();
-  return extractText(data);
+  return {
+    text: extractText(data),
+    inputTokens: data?.usage?.input_tokens ?? 0,
+    outputTokens: data?.usage?.output_tokens ?? 0,
+    reasoningTokens: data?.usage?.output_tokens_details?.reasoning_tokens ?? 0,
+    durationMs,
+  };
 }
 
 function extractText(resp) {

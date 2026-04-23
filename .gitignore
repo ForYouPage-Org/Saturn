@@ -1,0 +1,14 @@
+node_modules/
+.expo/
+dist/
+web-build/
+logs/
+.work/
+*.log
+.env
+.env.local
+.env.production
+.DS_Store
+ios/
+android/
+.vscode/

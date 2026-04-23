@@ -21,6 +21,7 @@ import { statSync } from "node:fs";
 import { db, q, nowIso, newToken } from "./db.mjs";
 import { complete as azureComplete, isConfigured as azureReady, modelName as azureModel } from "./azure.mjs";
 import { logCall as logAzureCall, usageLogPath } from "./azure-usage.mjs";
+import { hashPassword, verifyPassword } from "./passwords.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -74,9 +75,9 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, azure: azureReady(), time: nowIso() });
 });
 
-// ── /api/enroll ──────────────────────────────────────────────────────────────
+// ── /api/enroll — sign up a brand-new participant ──────────────────────────
 app.post("/api/enroll", (req, res) => {
-  const { participantCode, age, consent } = req.body ?? {};
+  const { participantCode, age, consent, password } = req.body ?? {};
   if (!participantCode || typeof participantCode !== "string") {
     return res.status(400).json({ error: "missing participantCode" });
   }
@@ -84,22 +85,59 @@ app.post("/api/enroll", (req, res) => {
     return res.status(400).json({ error: "age must be 13–19" });
   }
   if (!consent) return res.status(400).json({ error: "consent required" });
+  if (typeof password !== "string" || password.length < 6) {
+    return res.status(400).json({ error: "password must be at least 6 characters" });
+  }
 
   const code = participantCode.trim().toUpperCase();
   const existing = q.getParticipantByCode.get(code);
-  let participant = existing;
-  if (!existing) {
-    participant = q.insertParticipant.get({
-      participant_code: code,
-      age,
-      consent_at: nowIso(),
-    });
+  if (existing) {
+    // Don't overwrite someone else's account. Direct them to sign-in.
+    return res
+      .status(409)
+      .json({ error: "that participant code is already taken — try Generate, or sign in" });
   }
+
+  const participant = q.insertParticipant.get({
+    participant_code: code,
+    age,
+    consent_at: nowIso(),
+    password_hash: hashPassword(password),
+  });
 
   const token = newToken();
   q.insertSession.run(token, participant.id);
-  res.json({ token, participant });
+  res.json({ token, participant: stripSecret(participant) });
 });
+
+// ── /api/sign-in — returning participant ────────────────────────────────────
+app.post("/api/sign-in", (req, res) => {
+  const { participantCode, password } = req.body ?? {};
+  if (typeof participantCode !== "string" || typeof password !== "string") {
+    return res.status(400).json({ error: "missing credentials" });
+  }
+  const code = participantCode.trim().toUpperCase();
+  const participant = q.getParticipantByCode.get(code);
+  // Deliberately vague error text so we don't leak whether a code exists.
+  const bad = { error: "incorrect code or password" };
+  if (!participant) return res.status(401).json(bad);
+  if (!participant.password_hash) {
+    // Legacy row created before password support — they must re-enroll or have
+    // an admin set their password via sqlite3.
+    return res.status(403).json({ error: "account has no password set — contact the study team" });
+  }
+  if (!verifyPassword(password, participant.password_hash)) return res.status(401).json(bad);
+
+  const token = newToken();
+  q.insertSession.run(token, participant.id);
+  res.json({ token, participant: stripSecret(participant) });
+});
+
+function stripSecret(row) {
+  if (!row) return row;
+  const { password_hash, ...rest } = row;
+  return rest;
+}
 
 // ── /api/me ──────────────────────────────────────────────────────────────────
 app.get("/api/me", authRequired, (req, res) => {

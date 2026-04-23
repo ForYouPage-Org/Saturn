@@ -7,7 +7,8 @@ create table if not exists participants (
   age             integer,
   consent_at      text,
   enrolled_at     text    not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  expo_push_token text
+  expo_push_token text,
+  password_hash   text
 );
 
 create table if not exists sessions (

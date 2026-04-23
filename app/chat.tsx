@@ -142,6 +142,22 @@ export default function ChatScreen() {
               placeholderTextColor="#9a9aa8"
               multiline
               editable={!sending}
+              onKeyPress={(e) => {
+                // Web only: Enter = send, Shift+Enter = newline. Native
+                // behavior is unchanged (multiline textarea always newlines).
+                if (Platform.OS !== "web") return;
+                const ne = e.nativeEvent as unknown as {
+                  key?: string;
+                  shiftKey?: boolean;
+                  preventDefault?: () => void;
+                };
+                if (ne.key === "Enter" && !ne.shiftKey && input.trim() && !sending) {
+                  // Prevent the textarea from inserting a newline before our send.
+                  (e as unknown as { preventDefault?: () => void }).preventDefault?.();
+                  ne.preventDefault?.();
+                  onSend();
+                }
+              }}
             />
             <Pressable
               style={[styles.sendBtn, (sending || !input.trim()) && styles.sendBtnDisabled]}

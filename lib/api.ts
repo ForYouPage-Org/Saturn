@@ -80,10 +80,24 @@ async function request<T>(
 }
 
 export const api = {
-  async enroll(params: { participantCode: string; age: number; consent: boolean }) {
+  async enroll(params: {
+    participantCode: string;
+    age: number;
+    consent: boolean;
+    password: string;
+  }) {
     const { token, participant } = await request<{ token: string; participant: Participant }>(
       "POST",
       "/api/enroll",
+      params
+    );
+    await setToken(token);
+    return participant;
+  },
+  async signIn(params: { participantCode: string; password: string }) {
+    const { token, participant } = await request<{ token: string; participant: Participant }>(
+      "POST",
+      "/api/sign-in",
       params
     );
     await setToken(token);

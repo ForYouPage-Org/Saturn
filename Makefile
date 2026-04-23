@@ -59,7 +59,11 @@ status:
 	done
 
 tunnel-url:
-	@grep -oE 'https://[a-z0-9-]+\.ngrok(-free)?\.app' logs/tunnel.stdout.log 2>/dev/null | tail -1 || echo "no tunnel URL yet — check make logs"
+	@# Prefer ngrok's local admin API (most reliable). Falls back to log scrape.
+	@curl -s -m 2 http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+	  | node -e 'let s=""; process.stdin.on("data",c=>s+=c).on("end",()=>{try{const d=JSON.parse(s);const t=(d.tunnels||[]).find(x=>x.proto==="https")||(d.tunnels||[])[0];if(t&&t.public_url)console.log(t.public_url);}catch{}})' 2>/dev/null \
+	  || grep -oE 'https://[a-z0-9-]+\.ngrok(-free)?\.(app|dev)' logs/tunnel.stdout.log 2>/dev/null | tail -1 \
+	  || echo "no tunnel URL yet — check make logs"
 
 typecheck:
 	npx tsc --noEmit

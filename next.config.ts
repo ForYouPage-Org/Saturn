@@ -12,6 +12,12 @@ const BASE_PATH =
 
 const config: NextConfig = {
   basePath: BASE_PATH || undefined,
+  // Expose the basePath to client code. Next.js auto-prefixes <Link> and
+  // router.push(), but `fetch()` is on its own — we read this env var in
+  // lib/api-client.ts to build absolute API paths.
+  env: {
+    NEXT_PUBLIC_BASE_PATH: BASE_PATH,
+  },
   // Keep serverExternalPackages for better-sqlite3 — it's a native module
   // and Next.js shouldn't bundle it.
   serverExternalPackages: ["better-sqlite3"],

@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { apiPath } from "@/lib/api-client";
 
 type EsmQuestion =
   | {
@@ -64,7 +65,7 @@ function EsmInner() {
 
   useEffect(() => {
     const url = slug ? `/api/esm/active?slug=${encodeURIComponent(slug)}` : "/api/esm/active";
-    fetch(url, { credentials: "same-origin" })
+    fetch(apiPath(url), { credentials: "same-origin" })
       .then((r) => {
         if (r.status === 401) {
           router.replace("/");
@@ -93,7 +94,7 @@ function EsmInner() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/esm/response", {
+      const res = await fetch(apiPath("/api/esm/response"), {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },

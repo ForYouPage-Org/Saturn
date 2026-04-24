@@ -6,6 +6,8 @@ import Link from "next/link";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { Thread } from "@assistant-ui/react-ui";
 import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
+import { DefaultChatTransport } from "ai";
+import { apiPath } from "@/lib/api-client";
 import "@assistant-ui/react-ui/styles/index.css";
 import "@assistant-ui/react-ui/styles/markdown.css";
 import type { UIMessage } from "ai";
@@ -25,14 +27,16 @@ export default function ChatPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const me = await fetch("/api/me", { credentials: "same-origin" }).then((r) => r.json());
+      const me = await fetch(apiPath("/api/me"), { credentials: "same-origin" }).then((r) =>
+        r.json()
+      );
       if (!me?.participant) {
         router.replace("/");
         return;
       }
-      const hist = await fetch("/api/messages", { credentials: "same-origin" }).then((r) =>
-        r.json()
-      );
+      const hist = await fetch(apiPath("/api/messages"), {
+        credentials: "same-origin",
+      }).then((r) => r.json());
       if (cancelled) return;
       const mapped: UIMessage[] = ((hist?.messages ?? []) as HistoryRow[]).map((m) => ({
         id: String(m.id),
@@ -62,10 +66,17 @@ function ChatThread({ initialMessages }: { initialMessages: UIMessage[] }) {
   const router = useRouter();
   const runtime = useChatRuntime({
     messages: initialMessages,
+    transport: new DefaultChatTransport({
+      api: apiPath("/api/chat"),
+      credentials: "same-origin",
+    }),
   });
 
   async function signOut() {
-    await fetch("/api/sign-out", { method: "POST", credentials: "same-origin" });
+    await fetch(apiPath("/api/sign-out"), {
+      method: "POST",
+      credentials: "same-origin",
+    });
     router.replace("/");
   }
 

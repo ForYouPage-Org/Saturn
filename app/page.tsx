@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { cn, generateCode } from "@/lib/utils";
+import { apiPath } from "@/lib/api-client";
 
 const AGES = [13, 14, 15, 16, 17, 18, 19] as const;
 type Age = (typeof AGES)[number];
@@ -20,7 +21,7 @@ export default function Enrollment() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/me", { credentials: "same-origin" })
+    fetch(apiPath("/api/me"), { credentials: "same-origin" })
       .then((r) => r.json())
       .then((data) => {
         if (data?.participant) router.replace("/chat");
@@ -53,7 +54,7 @@ export default function Enrollment() {
         mode === "signup"
           ? { participantCode: normalized, age, consent: true, password }
           : { participantCode: normalized, password };
-      const res = await fetch(path, {
+      const res = await fetch(apiPath(path), {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },

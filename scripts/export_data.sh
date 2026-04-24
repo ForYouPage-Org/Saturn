@@ -2,7 +2,7 @@
 # Export pilot data as CSV for analysis in the ai-teen project.
 # Works against a local SQLite file. On the source Mac, grab a fresh copy
 # from the target first:
-#   scp marxs-imac:/Users/marxw/Research/projects/mercury/data/pilot.sqlite ./data/
+#   scp marx@marxs-imac:~/Developer/_mercury-pilot/data/pilot.sqlite ./data/
 #
 # Usage:
 #   ./scripts/export_data.sh [db_path] [out_dir]

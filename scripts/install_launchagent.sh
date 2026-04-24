@@ -18,8 +18,8 @@ if [[ ! -f "$TEMPLATE" ]]; then
   echo "!! missing template at $TEMPLATE"
   exit 1
 fi
-if [[ ! -d "$HERE/dist" ]]; then
-  echo "!! no dist/ directory yet — run \`make build\` first"
+if [[ ! -d "$HERE/.next" ]]; then
+  echo "!! no .next/ directory yet — run \`make build\` first"
   exit 1
 fi
 

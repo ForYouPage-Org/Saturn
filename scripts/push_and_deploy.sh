@@ -91,8 +91,8 @@ if [[ package-lock.json -nt node_modules/.hash ]] || [[ ! -d node_modules ]]; th
   mkdir -p node_modules && touch node_modules/.hash
 fi
 
-echo "   build web bundle"
-npm run build:web --silent
+echo "   next build"
+npm run build --silent
 
 echo "   kickstart LaunchAgent"
 launchctl kickstart -k "gui/\$(id -u)/com.mercury.pilot.web" 2>/dev/null || \

@@ -2,18 +2,19 @@ SHELL := /usr/bin/env bash
 UID := $(shell id -u)
 LABEL_WEB := com.mercury.pilot.web
 
-.PHONY: help install build build-web db-init web-start deploy ship install-agent uninstall-agent tailscale-serve logs status typecheck
+.PHONY: help install dev build start web-start deploy ship install-agent uninstall-agent tailscale-serve logs status typecheck
 
 help:
-	@echo "Mercury pilot — targets:"
+	@echo "Mercury pilot — Next.js + assistant-ui. Targets:"
 	@echo "  install         npm install (first time or after package.json change)"
-	@echo "  build           alias for build-web"
-	@echo "  build-web       export static web bundle to dist/"
-	@echo "  web-start       run the static server in the foreground (for dev / smoke test)"
-	@echo "  install-agent   install LaunchAgent that keeps the server running"
+	@echo "  dev             next dev on 127.0.0.1:3002 (MERCURY_BASE_PATH= to serve at /)"
+	@echo "  build           next build — produces .next/"
+	@echo "  start           next start on 127.0.0.1:3002 (reads secrets/server.env)"
+	@echo "  web-start       alias for start, via scripts/run_web.sh"
+	@echo "  install-agent   install LaunchAgent that keeps next start running"
 	@echo "  uninstall-agent unload and remove the LaunchAgent"
 	@echo "  tailscale-serve register /pilot mount on the shared Tailscale Funnel"
-	@echo "  deploy          rsync + rebuild on the target iMac, then kickstart the agent"
+	@echo "  deploy          rsync + rebuild on target iMac, kickstart the agent"
 	@echo "  ship            build locally, then deploy"
 	@echo "  logs            tail LaunchAgent stdout/stderr"
 	@echo "  status          show LaunchAgent status"
@@ -22,16 +23,16 @@ help:
 install:
 	npm install --no-audit --no-fund
 
-build: build-web
+dev:
+	MERCURY_BASE_PATH= npx next dev -p 3002
 
-build-web:
-	npm run build:web
+build:
+	npx next build
 
-db-init:
-	npm run db:init
-
-web-start:
+start:
 	bash scripts/run_web.sh
+
+web-start: start
 
 deploy:
 	bash scripts/push_and_deploy.sh

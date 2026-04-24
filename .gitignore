@@ -1,7 +1,7 @@
 node_modules/
-.expo/
+.next/
+out/
 dist/
-web-build/
 logs/
 data/*.sqlite
 data/*.sqlite-*
@@ -14,6 +14,6 @@ data-export/
 secrets/server.env
 secrets/backups/
 .DS_Store
-ios/
-android/
 .vscode/
+next-env.d.ts
+tsconfig.tsbuildinfo

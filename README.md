@@ -2,72 +2,81 @@
 
 Pilot app for a teen research study. Two things:
 
-1. **A minimal ChatGPT-like chatbot** (web + iOS + Android, one codebase) so teens can chat with an AI assistant and we collect every turn.
+1. **A ChatGPT-like chatbot** (web, with native wrapping available later via Capacitor) so teens can chat with an AI assistant and we collect every turn.
 2. **Experience sampling (ESM)** — we can push a short check-in survey at any time, and the teen fills it out in the app.
 
 Stack:
 
-- **Expo (React Native)** — one codebase for web, iOS, Android.
-- **Self-hosted Node server on the iMac** — Express + SQLite (`better-sqlite3`). One process serves both the static web bundle and `/api/*`. Matches the hub's pattern; no cloud backend to manage.
-- **Azure OpenAI Responses API** — called from the server, key in `secrets/server.env`, never in the client.
+- **Next.js 15 (App Router) + assistant-ui** for the web UI. Streaming chat via the Vercel AI SDK; markdown rendering and ChatGPT-like composer out of the box.
+- **SQLite** (`better-sqlite3`) for storage, lazy-initialised on the first API call.
+- **Azure OpenAI** via `@ai-sdk/azure`. Key in `secrets/server.env`, never in the client.
+- **Self-hosted on `marxs-imac`** under one LaunchAgent (`com.mercury.pilot.web`), publicly exposed on the shared **Tailscale Funnel** at `/pilot` alongside the hub at `/`.
 
-Integration with the `ai-teen` analysis project is intentionally thin: pilot data exports as CSV via [scripts/export_data.sh](scripts/export_data.sh), then gets ingested by the existing pipeline.
+Integration with the `ai-teen` analysis project is intentionally thin: CSV export via [scripts/export_data.sh](scripts/export_data.sh), then ingest with the existing pipeline.
 
-The repo lives at **`ForYouPage-Org/Saturn`** (the name carried over from an earlier project; the prior code is preserved on branch `archive/social-app`).
+The pre-migration Expo scaffold is preserved on branch [`archive/expo-shell`](https://github.com/ForYouPage-Org/Saturn/tree/archive/expo-shell). The repo name on GitHub is `Saturn` for historical reasons — the current `main` is mercury-pilot.
 
 ---
 
 ## Layout
 
 ```
-app/                       # Expo Router screens
-  _layout.tsx              # Stack + notification-tap handler
-  index.tsx                # Enrollment (code + age + consent)
-  chat.tsx                 # ChatGPT-like screen
-  esm.tsx                  # ESM form (modal)
-lib/                       # Client utilities (thin wrappers around fetch)
-  api.ts                   # HTTP client with Bearer-token auth
-  auth.ts  chat.ts  esm.ts # feature modules that use api.ts
-  notifications.ts         # Expo push token registration
-server/                    # The Node API + static file server
-  server.mjs               # Express app, all /api/* routes
-  db.mjs                   # better-sqlite3 + prepared statements
-  azure.mjs                # Azure OpenAI Responses API client
-  schema.sql   seed.sql    # applied on startup (idempotent)
+app/
+  layout.tsx                 # Root layout, globals
+  page.tsx                   # Enrollment (/)
+  chat/page.tsx              # assistant-ui Thread (/chat)
+  esm/page.tsx               # ESM form (/esm)
+  api/
+    health/route.ts
+    enroll/route.ts          # POST: sign up (participant code + password)
+    sign-in/route.ts         # POST: returning participant
+    sign-out/route.ts
+    me/route.ts              # GET: current participant (or null)
+    messages/route.ts        # GET: chat history for bootstrap
+    chat/route.ts            # POST: streaming chat (Azure + usage log)
+    esm/
+      active/route.ts        # GET: current active survey
+      response/route.ts      # POST: submit answers
+    admin/
+      esm-trigger/route.ts   # POST: researcher-only push broadcast
+
+lib/
+  db.ts                      # better-sqlite3 + lazy-init singleton
+  schema.sql   seed.sql      # applied on first DB access
+  azure.ts                   # @ai-sdk/azure wrapper
+  azure-usage.ts             # appends to hub's azure_usage.jsonl
+  passwords.ts               # scrypt-based password hashing
+  auth-server.ts             # HttpOnly-cookie session helpers
+  utils.ts                   # cn() + generateCode() (funky-panda-42 style)
+
 scripts/
-  run_web.sh               # LaunchAgent entrypoint for server.mjs
-  install_launchagent.sh   # installs com.mercury.pilot.web
-  tailscale_serve.sh       # registers /pilot on the shared Tailscale Funnel
-  push_and_deploy.sh       # source → target Mac deploy
-  export_data.sh           # sqlite3 → CSVs for ai-teen
-config/                    # LaunchAgent plist templates
-data/                      # SQLite DB lives here at runtime (gitignored)
-secrets/                   # Runtime secrets (gitignored except .example)
+  run_web.sh                 # LaunchAgent entrypoint for `next start`
+  install_launchagent.sh     # installs com.mercury.pilot.web
+  tailscale_serve.sh         # registers /pilot on the shared Funnel
+  push_and_deploy.sh         # source → target iMac deploy
+  export_data.sh             # sqlite3 → CSVs for ai-teen
+
+data/                        # SQLite DB at runtime (gitignored)
+secrets/                     # Runtime secrets (gitignored except .example)
 ```
 
 ---
 
-## Local dev (quick loop on your laptop)
+## Local dev
 
 ```bash
-cd /Users/marxw/Research/projects/mercury
 npm install
-cp secrets/server.env.example secrets/server.env
-# Fill in AZURE_OPENAI_API_KEY + MERCURY_ADMIN_TOKEN (openssl rand -base64 32)
-
-npm run db:init          # creates data/pilot.sqlite
-npm run build:web        # exports to dist/
-npm run serve            # starts server on 127.0.0.1:3002
+npm run dev          # next dev on 127.0.0.1:3002, no /pilot prefix
 # open http://127.0.0.1:3002
 ```
 
-For iterative UI work, use `npm run web` (Expo dev server) in another terminal — it hot-reloads and still talks to the Node API at `/api/*` (Expo dev server proxies).
+DB is created lazily at `data/pilot.sqlite` on the first API call. To test chat locally, create `secrets/server.env` with `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` and restart.
 
 ---
 
-## Deploying to the iMac (same pattern as `_hub`)
+## Deploying to the iMac
 
-The source Mac (this one) builds + pushes. The target iMac (`marxs-imac` on the Tailscale tailnet) hosts the Node server kept alive by a LaunchAgent on port **3002** (hub uses 3001; both can coexist). Public exposure is handled by the shared Tailscale Funnel — **no separate tunnel process** — under the `/pilot` path on the iMac's ts.net hostname.
+The source Mac builds + pushes. The target iMac (`marxs-imac` on the Tailscale tailnet) runs `next start` on port **3002**, kept alive by a LaunchAgent. Public URL via the shared Tailscale Funnel: `https://marxs-imac.tail876aa7.ts.net/pilot`.
 
 ### One-time, on the target iMac
 
@@ -77,62 +86,52 @@ cd ~/Developer/_mercury-pilot
 # Put secrets/server.env in place (or let `make deploy` rsync it for you).
 bash setup.sh
 bash scripts/install_launchagent.sh
-bash scripts/tailscale_serve.sh    # registers /pilot on the shared funnel
+bash scripts/tailscale_serve.sh     # registers /pilot on the Funnel
 ```
 
 Prereqs on target: Node 20+, Xcode Command Line Tools (for `better-sqlite3` native build), Tailscale, Remote Login on, source's SSH key in `~/.ssh/authorized_keys`.
 
-### One-time, on the source (this Mac)
+### One-time, on the source
 
 ```bash
 cp scripts/mercury-pilot-push.env.example ~/.mercury-pilot-push.env
 chmod 600 ~/.mercury-pilot-push.env
-# Edit MERCURY_PILOT_TARGET_HOST / _PATH / _USER
+# Edit MERCURY_PILOT_TARGET_HOST / _PATH / _USER to match the iMac
 ```
 
 ### Daily flow
 
 ```bash
-git push                   # push to origin/main
-make deploy                # rsync secrets + git pull + build + kickstart on target
+git push                 # push to origin/main
+make deploy              # rsync secrets + git pull + next build + kickstart on target
 # or:
-make ship                  # build locally first, then deploy
+make ship                # build locally first, then deploy
 ```
 
-`make deploy` does: snapshot target's `data/pilot.sqlite` back to `secrets/backups/<utc>/` (safety), `ssh target`, `git reset --hard origin/main`, rsync `secrets/server.env`, `npm install` (if `package-lock.json` changed), `npm run build:web`, `launchctl kickstart` the web agent. **Never touches `data/` on the target** — that's prod-owned.
+`make deploy` does: snapshot target's `data/pilot.sqlite` back to `secrets/backups/<utc>/` (safety), `ssh target`, `git reset --hard origin/main`, rsync `secrets/server.env`, `npm install` (if `package-lock.json` changed), `next build`, `launchctl kickstart` the web agent. **Never touches `data/` on the target.**
 
-### Public URL via the shared Tailscale Funnel
+### Tailscale serve / funnel
 
-The iMac already terminates HTTPS for the hub on `https://marxs-imac.tail876aa7.ts.net` via Tailscale Funnel. Mercury-pilot mounts under `/pilot` on the same domain — one fewer service than a per-app tunnel. `make tailscale-serve` (or `bash scripts/tailscale_serve.sh` directly on the iMac) registers:
-
-- `https://marxs-imac.tail876aa7.ts.net/` → hub (unchanged)
-- `https://marxs-imac.tail876aa7.ts.net/pilot` → mercury-pilot :3002
-
-Tailscale strips the `/pilot` prefix before forwarding, so Express still handles plain `/api/*` and `/_expo/*`. The prefix is baked into the web bundle via `app.json`'s `experiments.baseUrl` and `.env`'s `EXPO_PUBLIC_API_URL`.
-
-Changing the path (`/pilot` → `/study` etc.):
-1. Update `experiments.baseUrl` in `app.json`.
-2. Update `EXPO_PUBLIC_API_URL` in `.env`.
-3. On the iMac, `MERCURY_PILOT_MOUNT=/study bash scripts/tailscale_serve.sh`.
-4. `make ship` to rebuild and redeploy.
+`scripts/tailscale_serve.sh` runs `tailscale funnel --bg --https=443 --set-path=/pilot http://127.0.0.1:3002/pilot`. The target URL includes `/pilot` so the prefix is preserved on the wire, matching Next.js's `basePath: "/pilot"`. **Do not** use `tailscale serve` — it demotes the hostname to tailnet-only and breaks the hub's public access.
 
 ### Local commands
 
 ```bash
-make build             # export Expo web bundle to dist/
-make web-start         # foreground server on :3002
-make install-agent     # install the LaunchAgent
-make status            # show LaunchAgent state
-make logs              # tail server stdout/stderr
-make uninstall-agent   # unload + remove the plist
-make tailscale-serve   # (on target) register /pilot on the Tailscale Funnel
+make dev             # next dev on :3002, no /pilot prefix (for fast iteration)
+make build           # next build
+make start           # next start on :3002, reads secrets/server.env
+make install-agent   # install the LaunchAgent
+make status          # show LaunchAgent state
+make logs            # tail server stdout/stderr
+make uninstall-agent # unload + remove the plist
+make tailscale-serve # (on target) register /pilot on the Tailscale Funnel
 ```
 
 ---
 
 ## Triggering an ESM check-in
 
-The server exposes `POST /api/admin/esm-trigger`, gated by `MERCURY_ADMIN_TOKEN` from `secrets/server.env`. Broadcast to all participants with a registered push token:
+`POST /api/admin/esm-trigger`, gated by `MERCURY_ADMIN_TOKEN` from `secrets/server.env`:
 
 ```bash
 curl -X POST https://marxs-imac.tail876aa7.ts.net/pilot/api/admin/esm-trigger \
@@ -141,13 +140,7 @@ curl -X POST https://marxs-imac.tail876aa7.ts.net/pilot/api/admin/esm-trigger \
   -d '{"slug":"baseline","title":"Check-in time","body":"Got 30 seconds?"}'
 ```
 
-Or to a subset of participant ids:
-
-```bash
-... -d '{"slug":"baseline","participantIds":[1,2,5]}'
-```
-
-To schedule recurring triggers, add a cron / LaunchAgent on the source Mac that hits this endpoint on a schedule. Push notifications only fire on native iOS/Android builds — on web, participants use the **Take check-in** button on the chat screen.
+Push notifications only fire on native clients (iOS/Android via Capacitor when we add that). On web, participants use the **Check-in** link in the chat header.
 
 ### Authoring new surveys
 
@@ -168,7 +161,30 @@ insert into esm_surveys (slug, title, questions, active) values (
 SQL
 ```
 
-Supported question types: `likert` (with optional `min_label`/`max_label`), `text`, `choice` (with `multiple` flag). Set `optional: true` to allow blank answers.
+Supported question types: `likert`, `text`, `choice`. Set `optional: true` to allow blanks.
+
+---
+
+## Azure usage tracking via the hub dashboard
+
+Every `/api/chat` call appends one JSON line to whatever file `AZURE_USAGE_LOG_PATH` points at (default `./logs/azure_usage.jsonl`). On the iMac, set it to `/Users/marx/Developer/_mercury/logs/azure_usage.jsonl` and mercury-pilot traffic shows up in the hub's `/admin/azure-usage` dashboard bucketed as `mercury-pilot:<participant_code>`.
+
+Schema matches `_hub/web/src/lib/azure-usage.ts` exactly — see [lib/azure-usage.ts](lib/azure-usage.ts).
+
+---
+
+## Going native (later)
+
+Wrap the Next.js app in [Capacitor](https://capacitorjs.com/) when ESM push reliability becomes a research bottleneck:
+
+```bash
+npm install -D @capacitor/cli @capacitor/core @capacitor/ios @capacitor/android @capacitor/push-notifications
+npx cap init Mercury edu.research.mercury --web-dir=out
+```
+
+Configure `next.config.ts` to `output: "export"` for Capacitor's static export, or point Capacitor at the hosted URL via `server.url`. Then `npx cap add ios`, `npx cap add android`, and ship to TestFlight / Play Console. Push notifications flow through Capacitor's `@capacitor/push-notifications` plugin to `/api/admin/esm-trigger`.
+
+Keep one Next.js codebase; the native shells are a build step, not a rewrite.
 
 ---
 
@@ -177,45 +193,18 @@ Supported question types: `likert` (with optional `min_label`/`max_label`), `tex
 From the source Mac:
 
 ```bash
-scp marxs-imac:~/Research/projects/mercury/data/pilot.sqlite ./data/
+scp marxs-imac:~/Developer/_mercury-pilot/data/pilot.sqlite ./data/
 ./scripts/export_data.sh
 ```
 
-Writes `data-export/participants.csv`, `messages.csv`, `esm_responses.csv`, `esm_surveys.csv`. Feed those into `ai-teen/extract_conversations.py` or query directly — same participant ids across files. No shared code or schema between the two projects by design.
-
----
-
-## Going to iOS / Android for real users
-
-The web build is enough for early piloting. For TestFlight / Play Console:
-
-```bash
-npm install -g eas-cli
-eas login
-eas build:configure        # writes eas.json, tied to an EAS project id
-eas build --platform ios
-eas build --platform android
-```
-
-Once the EAS project exists:
-
-1. Add its id to [app.json](app.json) under `extra.eas.projectId` so `expo-notifications` can fetch a push token.
-2. Set `EXPO_PUBLIC_API_URL` in the build environment to the full absolute URL (`https://marxs-imac.tail876aa7.ts.net/pilot`), so native clients hit the right server.
-
----
-
-## Azure usage tracking via the hub dashboard
-
-Every `/api/chat` call appends one JSON line to whatever file `AZURE_USAGE_LOG_PATH` points at (default: `logs/azure_usage.jsonl` local to mercury-pilot). The hub's existing `/admin/azure-usage` dashboard reads the same JSONL format — set `AZURE_USAGE_LOG_PATH=/Users/marxw/Research/_hub/logs/azure_usage.jsonl` on the iMac and pilot traffic shows up in the hub dashboard automatically, grouped under `mercury-pilot:<participant_code>`. No hub code changes.
-
-The schema is defined in `_hub/web/src/lib/azure-usage.ts` — mercury-pilot's [server/azure-usage.mjs](server/azure-usage.mjs) emits the exact same shape. Token counts come from the Azure Responses API `usage` block. Per-1M pricing (`AZURE_OPENAI_INPUT_PRICE_PER_M` / `_OUTPUT_PRICE_PER_M`) defaults match the hub's rate card for gpt-5.x; override in `secrets/server.env` if Azure updates its pricing.
+Writes `data-export/participants.csv`, `messages.csv`, `esm_responses.csv`, `esm_surveys.csv`. Feed those into `ai-teen/extract_conversations.py`.
 
 ---
 
 ## Safety notes
 
-- The SQLite DB lives only on the iMac at `data/pilot.sqlite`. It's never pushed from source — `make deploy` snapshots a copy *back* to the source (`secrets/backups/<utc>/`) before each deploy.
-- The Azure OpenAI key is only in `secrets/server.env` on machines that run the server. `secrets/` is gitignored and rsynced source→target with `chmod 600`.
-- The system prompt in [server/server.mjs](server/server.mjs) nudges the model toward age-appropriate replies and flags distress. Review and adjust before deploying to real participants.
-- Auth is opaque Bearer tokens issued on enrollment; tokens persist in `AsyncStorage` on the device. No passwords — the participant-code acts as a pre-shared identifier. Suitable for a small pilot; not suitable for hostile users.
-- Consent is a single checkbox today. For IRB-compliant recruiting, replace the enrollment screen with a proper assent + parental-consent flow.
+- Auth is an opaque Bearer token stored as an HttpOnly cookie on the client. No XSS path to the token.
+- Passwords are salted + scrypt-hashed. No password recovery — a researcher has to clear the row manually if a teen forgets.
+- The Azure key only lives in `secrets/server.env` on machines running the server. `secrets/` is gitignored; rsynced source→target with `chmod 600`.
+- The system prompt in [app/api/chat/route.ts](app/api/chat/route.ts) nudges the model toward age-appropriate replies and flags distress. Review and adjust before real participants.
+- Consent is a single checkbox today. For IRB-compliant recruiting, replace the enrollment flow with proper assent + parental-consent text.

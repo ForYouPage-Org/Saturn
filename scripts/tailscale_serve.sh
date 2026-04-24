@@ -2,24 +2,23 @@
 # Register mercury-pilot under /pilot on the shared Tailscale Funnel.
 # Idempotent: re-running updates the mount in place.
 #
-# Run once on the target iMac. The config persists across reboots, so this
-# isn't a LaunchAgent — just a one-time (or redeploy-once) command.
+# Next.js's basePath means the server expects to see /pilot/* in the path.
+# Pass a target URL that includes /pilot so tailscale preserves the prefix
+# on the wire rather than stripping it. Result:
+#   browser  →  https://<host>/pilot/foo
+#   backend  →  http://127.0.0.1:3002/pilot/foo   (Next.js routes /pilot/foo)
 #
-# End result: https://<machine>.<tailnet>.ts.net/pilot → :3002
-# Path stripping is handled by tailscale — Express still sees plain /api/*
-# and /_expo/* paths, so no server-side code changes needed.
+# End result: https://<machine>.<tailnet>.ts.net/pilot → Next.js on :3002
 #
 # NOTE: we intentionally use `tailscale funnel` rather than `tailscale serve`.
 # `serve` exposes only within the tailnet; `funnel` is the public-internet
 # mode. Using `serve` with --set-path will silently disable funnel on the
-# whole hostname, which also breaks the hub's public access. See
-# https://tailscale.com/kb/1247/funnel-serve-use-cases.
+# whole hostname, which also breaks the hub's public access.
 set -euo pipefail
 
 MOUNT="${MERCURY_PILOT_MOUNT:-/pilot}"
 PORT="${MERCURY_PILOT_PORT:-3002}"
 
-# Tailscale CLI isn't on the bare PATH on macOS; find the binary.
 if [[ -x /usr/local/bin/tailscale ]]; then
   TS=/usr/local/bin/tailscale
 elif [[ -x /opt/homebrew/bin/tailscale ]]; then
@@ -31,8 +30,9 @@ else
   exit 1
 fi
 
-echo "── registering ${MOUNT} → http://127.0.0.1:${PORT}  (public via funnel)"
-"$TS" funnel --bg --https=443 --set-path="$MOUNT" "http://127.0.0.1:$PORT"
+TARGET_URL="http://127.0.0.1:${PORT}${MOUNT}"
+echo "── registering ${MOUNT} → ${TARGET_URL}  (public via funnel, path preserved)"
+"$TS" funnel --bg --https=443 --set-path="$MOUNT" "$TARGET_URL"
 
 echo
 echo "── current serve/funnel config:"

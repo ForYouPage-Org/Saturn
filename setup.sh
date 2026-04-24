@@ -38,13 +38,13 @@ if [[ ! -f secrets/server.env ]]; then
 fi
 
 # 4. Initialise SQLite (idempotent — runs schema.sql + seed.sql).
-echo "── initialise DB (data/pilot.sqlite)"
+# 4. Ensure data/ exists; the DB is created lazily by the server on first
+#    request.
 mkdir -p data
-npm run db:init
 
-# 5. Build web bundle.
-echo "── build web bundle → dist/"
-npm run build:web
+# 5. Build Next.js production bundle.
+echo "── next build → .next/"
+npm run build
 
 # 6. Logs dir for the LaunchAgent.
 mkdir -p logs

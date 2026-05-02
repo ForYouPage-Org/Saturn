@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { q, nowIso, newToken, toClientParticipant } from "@/lib/db";
+import { q, nowIso, newToken, toClientParticipant, logEvent } from "@/lib/db";
 import { hashPassword } from "@/lib/passwords";
 import { buildSessionCookie } from "@/lib/auth-server";
 
@@ -46,6 +46,11 @@ export async function POST(req: Request) {
 
   const token = newToken();
   q.insertSession.run(token, participant!.id);
+  logEvent({
+    participantId: participant!.id,
+    kind: "enroll",
+    meta: { age: body.age },
+  });
 
   return NextResponse.json(
     { participant: toClientParticipant(participant!) },

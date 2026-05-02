@@ -1,6 +1,6 @@
 import { streamText, convertToModelMessages, type UIMessage } from "ai";
 import { getCurrentParticipant } from "@/lib/auth-server";
-import { q } from "@/lib/db";
+import { q, logEvent } from "@/lib/db";
 import { getAzureModel, azureReady, modelName } from "@/lib/azure";
 import { logCall } from "@/lib/azure-usage";
 
@@ -51,6 +51,11 @@ export async function POST(req: Request) {
     role: "user",
     content: lastUserText,
   });
+  logEvent({
+    participantId: me.id,
+    kind: "chat_message",
+    meta: { role: "user", chars: lastUserText.length },
+  });
 
   // Build server-side history for LLM context.
   const recent = q.recentMessages.all(me.id, HISTORY_WINDOW * 2);
@@ -77,6 +82,17 @@ export async function POST(req: Request) {
           participant_id: me.id,
           role: "assistant",
           content: text,
+        });
+        logEvent({
+          participantId: me.id,
+          kind: "chat_message",
+          meta: {
+            role: "assistant",
+            chars: text.length,
+            input_tokens: totalUsage?.inputTokens ?? 0,
+            output_tokens: totalUsage?.outputTokens ?? 0,
+            duration_ms: durationMs,
+          },
         });
       } catch (err) {
         console.error(

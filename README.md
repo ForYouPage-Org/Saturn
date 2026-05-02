@@ -24,8 +24,18 @@ The pre-migration Expo scaffold is preserved on branch [`archive/expo-shell`](ht
 app/
   layout.tsx                 # Root layout, globals
   page.tsx                   # Enrollment (/)
-  chat/page.tsx              # assistant-ui Thread (/chat)
-  esm/page.tsx               # ESM form (/esm)
+  chat/page.tsx              # assistant-ui Thread (/chat) — locks behind required surveys
+  esm/page.tsx               # On-demand ESM form (/esm)
+  _components/
+    SurveyForm.tsx           # Renders likert/text/choice question lists
+    PendingSurveyGate.tsx    # Polls /api/surveys/pending; locks chat with modal
+  admin/                     # Researcher dashboard — gated by MERCURY_ADMIN_TOKEN
+    layout.tsx               # Sidebar + auth check
+    login/page.tsx
+    page.tsx                 # Overview (counts + recent activity)
+    participants/            # List + per-participant detail (transcript, responses, events)
+    surveys/                 # CRUD + per-survey deploy form
+    events/page.tsx          # Activity feed
   api/
     health/route.ts
     enroll/route.ts          # POST: sign up (participant code + password)
@@ -36,17 +46,30 @@ app/
     chat/route.ts            # POST: streaming chat (Azure + usage log)
     esm/
       active/route.ts        # GET: current active survey
-      response/route.ts      # POST: submit answers
+      response/route.ts      # POST: submit answers (closes assignment if linked)
+    surveys/
+      pending/route.ts       # GET: next pending assignment for the current participant
     admin/
-      esm-trigger/route.ts   # POST: researcher-only push broadcast
+      login/route.ts         # POST: trade MERCURY_ADMIN_TOKEN for HttpOnly cookie
+      logout/route.ts
+      me/route.ts            # GET: { configured, authenticated }
+      overview/route.ts      # GET: dashboard counters
+      events/route.ts        # GET: activity feed
+      participants/route.ts  # GET: all participants + stats
+      participants/[id]/route.ts  # GET: full transcript / responses / assignments / events
+      surveys/route.ts       # GET / POST: list + create
+      surveys/[id]/route.ts  # GET / PATCH / DELETE
+      surveys/[id]/deploy/route.ts  # POST: create survey_assignments (now / at / series)
+      esm-trigger/route.ts   # (legacy) POST: researcher-only push broadcast
 
 lib/
-  db.ts                      # better-sqlite3 + lazy-init singleton
-  schema.sql   seed.sql      # applied on first DB access
+  db.ts                      # better-sqlite3 + lazy-init singleton; logEvent helper
+  schema.sql   seed.sql      # applied on first DB access; adds columns idempotently
   azure.ts                   # @ai-sdk/azure wrapper
   azure-usage.ts             # appends to hub's azure_usage.jsonl
   passwords.ts               # scrypt-based password hashing
-  auth-server.ts             # HttpOnly-cookie session helpers
+  auth-server.ts             # HttpOnly-cookie session helpers (participants)
+  admin-auth.ts              # HttpOnly-cookie + header helpers (researcher)
   utils.ts                   # cn() + generateCode() (funky-panda-42 style)
 
 scripts/
@@ -129,7 +152,36 @@ make tailscale-serve # (on target) register /pilot on the Tailscale Funnel
 
 ---
 
-## Triggering an ESM check-in
+## Survey deployment (the dashboard way)
+
+The researcher dashboard at `/admin` is the primary surface for authoring and
+deploying surveys. It uses cookie auth — sign in once with the
+`MERCURY_ADMIN_TOKEN` from `secrets/server.env` and the rest is point-and-click.
+
+1. **Author** at `/admin/surveys/new`. Pick a category:
+   - **ESM** — short, in-the-moment (mood, what-are-you-doing-now)
+   - **Scale** — validated multi-item instruments (PHQ-9, GAD-7, BFI-10, …)
+   - **Baseline** — one-time at enrollment (demographics, etc.)
+   - **Adhoc** — anything else
+
+2. **Deploy** at `/admin/surveys/[id]/deploy`:
+   - Pick which participants get it
+   - Choose a schedule:
+     - **Now** — single immediate assignment
+     - **At a time** — single assignment available at a specific datetime
+     - **Repeating** — `count` × `intervalHours` series (`series_id` links them).
+       E.g. ESM 4×/day for a week → count=28, intervalHours=4. Weekly PHQ-9 →
+       count=8, intervalHours=168.
+   - Toggle **Required**. When on, the participant's chat is locked behind a
+     full-screen modal until the survey is submitted; the modal pops the moment
+     `available_at` passes (`/api/surveys/pending` polled every 60s and on tab
+     focus).
+
+3. **Watch results** at `/admin/participants/[id]` (full transcript, responses,
+   events) and `/admin/events` (activity feed: enroll, login, chat_message,
+   survey_shown, survey_completed, survey_deployed, …).
+
+### Triggering an ESM push (legacy, native-only)
 
 `POST /api/admin/esm-trigger`, gated by `MERCURY_ADMIN_TOKEN` from `secrets/server.env`:
 

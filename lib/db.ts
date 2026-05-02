@@ -397,6 +397,14 @@ function init(): { db: DatabaseType; q: Queries } {
   );
   ensureColumn(db, "esm_responses", "assignment_id", "assignment_id integer");
 
+  // Indexes that reference newly-added columns must be created AFTER
+  // ensureColumn — otherwise db.exec(SCHEMA) trips on them on the very first
+  // post-migration boot (column doesn't exist yet) and every subsequent CREATE
+  // statement is skipped, leaving the DB half-migrated.
+  db.exec(
+    `create index if not exists esm_surveys_active_idx on esm_surveys(active, archived);`
+  );
+
   db.exec(SEED);
 
   const q = buildQueries(db);

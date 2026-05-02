@@ -39,7 +39,10 @@ create table if not exists esm_surveys (
   archived     integer not null default 0 check (archived in (0,1)),
   created_at   text    not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-create index if not exists esm_surveys_active_idx on esm_surveys(active, archived);
+-- esm_surveys_active_idx is created in lib/db.ts after ensureColumn() runs —
+-- otherwise db.exec(SCHEMA) throws on existing pre-migration DBs that don't
+-- yet have the `archived` column, and every later statement (incl. creating
+-- survey_assignments and events) is skipped.
 
 create table if not exists survey_assignments (
   id             integer primary key autoincrement,
